@@ -1,93 +1,96 @@
-# OpenAI Realtime + ElevenLabs cloned voice
+# Realtime chatbot with your ElevenLabs voice
 
-This is a local prototype where:
+This project is a local prototype for a ChatGPT-style voice conversation while
+keeping the assistant's spoken output in your cloned ElevenLabs voice.
 
-- OpenAI Realtime receives your microphone audio directly over WebRTC.
-- OpenAI semantic VAD decides when your turn starts/ends.
-- OpenAI handles conversation state, reasoning, and interruptions.
-- OpenAI returns text only.
-- The text is streamed to ElevenLabs.
-- ElevenLabs speaks it using your `ELEVENLABS_VOICE_ID`.
-- If you speak while the assistant is talking, the browser immediately stops queued ElevenLabs audio and the current ElevenLabs generation.
+The realtime path is:
+
+1. The browser sends microphone audio directly to OpenAI Realtime over WebRTC.
+2. OpenAI semantic VAD detects natural turn boundaries and interruptions.
+3. OpenAI maintains the conversation and streams a text response.
+4. The local server streams that text to ElevenLabs.
+5. The browser schedules ElevenLabs PCM audio for low-latency playback.
+6. If you begin speaking, queued audio and the active ElevenLabs generation stop immediately.
+
+API keys stay on the server and are never sent in the public frontend files.
 
 ## Requirements
 
-- Node.js 20+
-- An OpenAI API key with access to Realtime
+- Node.js 20 or newer
+- An OpenAI API key with Realtime access
 - An ElevenLabs API key
-- An ElevenLabs voice ID
+- The ElevenLabs voice ID for your cloned voice
 
 ## Setup
 
-1. Copy `.env.example` to `.env`
+Copy the example configuration and enter your credentials:
 
 ```bash
 cp .env.example .env
+npm install
 ```
-
-2. Fill in:
 
 ```env
 OPENAI_API_KEY=
 ELEVENLABS_API_KEY=
 ELEVENLABS_VOICE_ID=
 PORT=3000
+REALTIME_MODEL=gpt-realtime-2.1
+REALTIME_VAD_EAGERNESS=auto
 ```
 
-3. Install dependencies:
-
-```bash
-npm install
-```
-
-4. Start:
+Start the app:
 
 ```bash
 npm start
 ```
 
-5. Open:
+Open `http://localhost:3000`, allow microphone permission, and press
+**Start conversation**. If you change `PORT`, use that port in the URL instead.
 
-```text
-http://localhost:3000
+The server exits with a clear message if a required setting is missing, a value
+is invalid, or the configured port is already occupied.
+
+## Natural turn-taking
+
+`REALTIME_VAD_EAGERNESS=auto` is the recommended starting point for a natural,
+ChatGPT-like conversation. Available values are:
+
+- `low` — gives longer pauses more time before ending your turn
+- `medium` — balanced explicit setting
+- `high` — responds quickly but may cut off a thoughtful pause
+- `auto` — lets semantic VAD choose dynamically
+
+After changing `.env`, restart the server.
+
+## ElevenLabs output
+
+The relay uses `eleven_flash_v2_5` with `pcm_24000`. Each OpenAI response owns a
+separate ElevenLabs generation. When a new response starts or you interrupt, the
+old generation is closed and any delayed audio from it is discarded.
+
+## Verification
+
+Run linting and automated tests together:
+
+```bash
+npm run check
 ```
 
-6. Allow microphone permission and press **Start conversation**.
+Useful manual checks:
 
-## Good test
+1. Have a normal multi-turn conversation.
+2. Pause mid-sentence, then finish the thought.
+3. Interrupt while the cloned voice is speaking.
+4. Interrupt repeatedly and quickly.
+5. End and restart the conversation several times.
+6. Temporarily use an invalid API key and confirm that the UI reports the failure.
 
-Say:
-
-> I want to talk about AI stocks, but give me a second to think...
-
-Pause briefly, continue your thought, and then interrupt the assistant while it is speaking.
-
-## Tuning
-
-In `server.js`, change:
-
-```js
-eagerness: "auto"
-```
-
-to:
-
-- `"low"` — waits longer before taking the turn
-- `"medium"` — balanced
-- `"high"` — responds faster
-- `"auto"` — default semantic behavior
-
-For a ChatGPT-like natural conversation, start with `auto`.
-
-ElevenLabs uses:
-
-```text
-eleven_flash_v2_5
-```
-
-for low-latency TTS and requests `pcm_24000`, which the browser schedules through the Web Audio API.
+The automated tests cover configuration validation, initial text buffering,
+response-ID isolation, stale audio rejection, and interruption cleanup in the TTS relay.
 
 ## Security
 
-Never put either API key in `public/app.js` or `public/index.html`.
-The server reads both keys from `.env`.
+- Keep real credentials only in `.env`; it is ignored by Git.
+- Keep `.env.example` limited to blank placeholders and non-secret defaults.
+- Rotate a key immediately if it is ever committed, shared, or copied into logs.
