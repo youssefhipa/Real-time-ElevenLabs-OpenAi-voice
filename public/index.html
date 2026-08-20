@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenAI Realtime + ElevenLabs Voice</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <main class="card">
+    <div class="eyebrow">LOCAL VOICE TEST</div>
+    <h1>OpenAI Realtime + ElevenLabs</h1>
+    <p class="sub">
+      OpenAI listens, understands turns, reasons, and handles interruptions.
+      ElevenLabs only speaks the final answer in your cloned voice.
+    </p>
+
+    <div id="orb" class="orb idle"></div>
+    <div id="status" class="status">Ready</div>
+
+    <div class="buttons">
+      <button id="startBtn">Start conversation</button>
+      <button id="stopBtn" class="secondary" disabled>End</button>
+    </div>
+
+    <section>
+      <h2>You</h2>
+      <div id="userText" class="transcript muted">Your transcript will appear here.</div>
+    </section>
+
+    <section>
+      <h2>Assistant</h2>
+      <div id="assistantText" class="transcript muted">The assistant response will appear here.</div>
+    </section>
+
+    <details>
+      <summary>Debug events</summary>
+      <pre id="debug"></pre>
+    </details>
+  </main>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
