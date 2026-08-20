@@ -68,6 +68,45 @@ function setup() {
   return { browser, errors };
 }
 
+test("reuses a prepared ElevenLabs socket for the next response", () => {
+  const { browser } = setup();
+  browser.receive({ type: "prepare" });
+  const socket = FakeSocket.instances[0];
+  socket.open();
+
+  assert.equal(browser.sent.some((message) => message.type === "tts_ready"), false);
+
+  browser.receive({ type: "start", responseId: "response-1" });
+
+  assert.equal(FakeSocket.instances.length, 1);
+  assert.deepEqual(browser.sent.at(-1), {
+    type: "tts_ready",
+    responseId: "response-1",
+  });
+});
+
+test("queues response text while a prepared socket is still connecting", () => {
+  const { browser } = setup();
+  browser.receive({ type: "prepare" });
+  const socket = FakeSocket.instances[0];
+
+  browser.receive({ type: "start", responseId: "response-1" });
+  browser.receive({
+    type: "text",
+    responseId: "response-1",
+    text: "Start speaking quickly.",
+  });
+  socket.open();
+
+  assert.equal(FakeSocket.instances.length, 1);
+  assert.equal(socket.sent[0].text, " ");
+  assert.deepEqual(socket.sent[1], {
+    text: "Start speaking quickly.",
+    try_trigger_generation: true,
+    flush: true,
+  });
+});
+
 test("buffers initial text and flushes it after ElevenLabs opens", () => {
   const { browser } = setup();
   browser.receive({ type: "start", responseId: "response-1" });
@@ -82,14 +121,53 @@ test("buffers initial text and flushes it after ElevenLabs opens", () => {
   socket.open();
 
   assert.equal(socket.sent[0].text, " ");
+  assert.deepEqual(socket.sent[0].generation_config.chunk_length_schedule, [
+    50, 80, 120, 150,
+  ]);
   assert.deepEqual(socket.sent[1], {
     text: "This is enough text to begin.",
     try_trigger_generation: true,
+    flush: true,
   });
   assert.deepEqual(browser.sent.at(-1), {
     type: "tts_ready",
     responseId: "response-1",
   });
+});
+
+test("flushes completed sentences before the response ends", () => {
+  const { browser } = setup();
+  browser.receive({ type: "start", responseId: "response-1" });
+  const socket = FakeSocket.instances[0];
+  socket.open();
+
+  browser.receive({
+    type: "text",
+    responseId: "response-1",
+    text: "Here is the first sentence.",
+  });
+
+  assert.deepEqual(socket.sent[1], {
+    text: "Here is the first sentence.",
+    try_trigger_generation: true,
+    flush: true,
+  });
+});
+
+test("flushes remaining audio and sends the documented end packet", () => {
+  const { browser } = setup();
+  browser.receive({ type: "start", responseId: "response-1" });
+  const socket = FakeSocket.instances[0];
+  socket.open();
+
+  browser.receive({
+    type: "text",
+    responseId: "response-1",
+    text: "An unfinished phrase",
+  });
+  browser.receive({ type: "end", responseId: "response-1" });
+
+  assert.deepEqual(socket.sent.at(-1), { text: "" });
 });
 
 test("drops stale audio after a new response replaces an old generation", () => {
@@ -114,6 +192,28 @@ test("drops stale audio after a new response replaces an old generation", () => 
       audio: "current-audio",
     },
   ]);
+});
+
+test("forwards ElevenLabs alignment with its matching audio chunk", () => {
+  const { browser } = setup();
+  browser.receive({ type: "start", responseId: "response-1" });
+  const socket = FakeSocket.instances[0];
+  socket.open();
+
+  const alignment = {
+    chars: ["H", "i"],
+    char_start_times_ms: [0, 40],
+    char_durations_ms: [40, 60],
+  };
+  socket.receive({ audio: "audio-data", normalizedAlignment: alignment });
+
+  assert.match(socket.url, /sync_alignment=true/);
+  assert.deepEqual(browser.sent.at(-1), {
+    type: "audio",
+    responseId: "response-1",
+    audio: "audio-data",
+    alignment,
+  });
 });
 
 test("ignores text and end messages for a stale response", () => {

@@ -2,6 +2,7 @@ const startBtn = document.querySelector("#startBtn");
 const stopBtn = document.querySelector("#stopBtn");
 const statusEl = document.querySelector("#status");
 const orb = document.querySelector("#orb");
+const avatarEl = document.querySelector("#avatar");
 const userTextEl = document.querySelector("#userText");
 const assistantTextEl = document.querySelector("#assistantText");
 const debugEl = document.querySelector("#debug");
@@ -18,10 +19,16 @@ let activeResponseId = null;
 let assistantText = "";
 let userText = "";
 let activeTtsDone = false;
+let turnEndedAt = 0;
+let firstTextSeen = false;
+let firstAudioSeen = false;
 
 let nextAudioTime = 0;
 let scheduledSources = new Set();
 let ttsGeneration = 0;
+let avatarCues = [];
+let avatarAnimationFrame = null;
+let currentViseme = "rest";
 
 function log(...args) {
   const line = args
@@ -34,6 +41,11 @@ function log(...args) {
 function setState(state, label) {
   orb.className = `orb ${state}`;
   statusEl.textContent = label;
+}
+
+function logLatency(label) {
+  if (!turnEndedAt) return;
+  log(`[latency] ${label}: ${Math.round(performance.now() - turnEndedAt)}ms`);
 }
 
 function wsUrl(path) {
@@ -101,7 +113,11 @@ function connectTtsSocket(attempt) {
 
       if (message.type === "audio") {
         if (message.responseId !== activeResponseId) return;
-        queuePcm24k(message.audio, ttsGeneration).catch((error) => {
+        if (!firstAudioSeen) {
+          firstAudioSeen = true;
+          logLatency("first ElevenLabs audio");
+        }
+        queuePcm24k(message.audio, ttsGeneration, message.alignment).catch((error) => {
           log("AUDIO ERROR:", error.message || String(error));
         });
       }
@@ -114,6 +130,10 @@ function connectTtsSocket(attempt) {
           activeResponseId = null;
           setState("listening", "Listening");
         }
+      }
+
+      if (message.type === "tts_ready" && message.responseId === activeResponseId) {
+        logLatency("ElevenLabs socket ready");
       }
 
       if (message.type === "error") {
@@ -130,8 +150,94 @@ function sendTts(message) {
   }
 }
 
+function setAvatarViseme(viseme) {
+  if (!avatarEl || currentViseme === viseme) return;
+  currentViseme = viseme;
+  avatarEl.dataset.viseme = viseme;
+}
+
+function stopAvatarAnimation() {
+  avatarCues = [];
+  if (avatarAnimationFrame !== null) {
+    window.cancelAnimationFrame(avatarAnimationFrame);
+    avatarAnimationFrame = null;
+  }
+  setAvatarViseme("rest");
+}
+
+function visemeForCharacter(character, index) {
+  if (/\s|[.,!?;:'"-]/.test(character)) return "rest";
+  if (/[oquw]/i.test(character)) return "round";
+  if (/[bmp]/i.test(character)) return "rest";
+  if (/[aeiyfv]/i.test(character)) return "wide";
+  return index % 3 === 0 ? "round" : "wide";
+}
+
+function animateAvatar() {
+  if (!audioContext) {
+    stopAvatarAnimation();
+    return;
+  }
+
+  const now = audioContext.currentTime;
+  avatarCues = avatarCues.filter(
+    (cue) => cue.generation === ttsGeneration && cue.end > now - 0.08
+  );
+  const activeCue = avatarCues.find((cue) => cue.start <= now && cue.end > now);
+  setAvatarViseme(activeCue?.viseme || "rest");
+
+  if (scheduledSources.size > 0 || avatarCues.length > 0) {
+    avatarAnimationFrame = window.requestAnimationFrame(animateAvatar);
+  } else {
+    avatarAnimationFrame = null;
+    setAvatarViseme("rest");
+  }
+}
+
+function scheduleAvatarCues(alignment, startAt, duration, generation) {
+  const characters = alignment?.chars;
+  const starts = alignment?.char_start_times_ms;
+  const durations = alignment?.char_durations_ms;
+
+  if (
+    Array.isArray(characters) &&
+    Array.isArray(starts) &&
+    Array.isArray(durations) &&
+    characters.length === starts.length &&
+    characters.length === durations.length
+  ) {
+    for (let index = 0; index < characters.length; index += 1) {
+      const cueStart = startAt + Math.max(0, Number(starts[index]) || 0) / 1000;
+      const cueDuration = Math.max(45, Number(durations[index]) || 0) / 1000;
+      avatarCues.push({
+        generation,
+        start: cueStart,
+        end: cueStart + cueDuration,
+        viseme: visemeForCharacter(characters[index], index),
+      });
+    }
+  } else {
+    // Keep the avatar responsive if an occasional audio packet has no
+    // alignment metadata. Accurate ElevenLabs cues replace this fallback.
+    for (let offset = 0, index = 0; offset < duration; offset += 0.1, index += 1) {
+      avatarCues.push({
+        generation,
+        start: startAt + offset,
+        end: startAt + Math.min(duration, offset + 0.085),
+        viseme: index % 3 === 1 ? "round" : "wide",
+      });
+    }
+  }
+
+  avatarCues.sort((a, b) => a.start - b.start);
+  if (avatarAnimationFrame === null) {
+    avatarAnimationFrame = window.requestAnimationFrame(animateAvatar);
+  }
+}
+
 function stopAllPlayback() {
   ttsGeneration += 1;
+  stopAvatarAnimation();
 
   for (const source of scheduledSources) {
     try {
@@ -145,7 +251,7 @@ function stopAllPlayback() {
   }
 }
 
-async function queuePcm24k(base64Audio, generationAtArrival) {
+async function queuePcm24k(base64Audio, generationAtArrival, alignment) {
   if (!audioContext || generationAtArrival !== ttsGeneration) return;
 
   const binary = atob(base64Audio);
@@ -176,10 +282,15 @@ async function queuePcm24k(base64Audio, generationAtArrival) {
   const startAt = Math.max(now + 0.015, nextAudioTime);
   source.start(startAt);
   nextAudioTime = startAt + buffer.duration;
+  scheduleAvatarCues(alignment, startAt, buffer.duration, generationAtArrival);
 
   scheduledSources.add(source);
   source.onended = () => {
     scheduledSources.delete(source);
+
+    if (scheduledSources.size === 0) {
+      setAvatarViseme("rest");
+    }
 
     if (
       scheduledSources.size === 0 &&
@@ -222,6 +333,10 @@ function handleRealtimeEvent(event) {
       break;
 
     case "input_audio_buffer.speech_stopped":
+      turnEndedAt = performance.now();
+      firstTextSeen = false;
+      firstAudioSeen = false;
+      sendTts({ type: "prepare" });
       setState("thinking", "Thinking…");
       break;
 
@@ -242,6 +357,7 @@ function handleRealtimeEvent(event) {
       break;
 
     case "response.created":
+      logLatency("OpenAI response created");
       activeResponseId = event.response?.id || crypto.randomUUID();
       activeTtsDone = false;
       assistantText = "";
@@ -255,6 +371,11 @@ function handleRealtimeEvent(event) {
 
     case "response.output_text.delta":
       if (!activeResponseId || !eventMatchesActiveResponse(event)) break;
+
+      if (!firstTextSeen && event.delta) {
+        firstTextSeen = true;
+        logLatency("first OpenAI text");
+      }
 
       assistantText += event.delta || "";
       assistantTextEl.textContent = assistantText;

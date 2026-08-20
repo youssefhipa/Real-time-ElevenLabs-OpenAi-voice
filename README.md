@@ -36,7 +36,7 @@ ELEVENLABS_API_KEY=
 ELEVENLABS_VOICE_ID=
 PORT=3000
 REALTIME_MODEL=gpt-realtime-2.1
-REALTIME_VAD_EAGERNESS=auto
+REALTIME_VAD_EAGERNESS=high
 ```
 
 Start the app:
@@ -53,21 +53,29 @@ is invalid, or the configured port is already occupied.
 
 ## Natural turn-taking
 
-`REALTIME_VAD_EAGERNESS=auto` is the recommended starting point for a natural,
-ChatGPT-like conversation. Available values are:
+`REALTIME_VAD_EAGERNESS=high` is the recommended setting for the lowest turn-end
+latency. Available values are:
 
 - `low` — gives longer pauses more time before ending your turn
 - `medium` — balanced explicit setting
 - `high` — responds quickly but may cut off a thoughtful pause
-- `auto` — lets semantic VAD choose dynamically
+- `auto` — the default OpenAI behavior; currently equivalent to `medium`
 
 After changing `.env`, restart the server.
 
 ## ElevenLabs output
 
-The relay uses `eleven_flash_v2_5` with `pcm_24000`. Each OpenAI response owns a
-separate ElevenLabs generation. When a new response starts or you interrupt, the
-old generation is closed and any delayed audio from it is discarded.
+The relay uses `eleven_flash_v2_5` with `pcm_24000` and a low-latency chunk
+schedule. It begins generating from early text deltas and flushes completed
+sentences, so speech starts before OpenAI finishes the full response. The app also
+prepares the next ElevenLabs connection as soon as you stop speaking, overlapping
+its handshake with OpenAI's response time. Each OpenAI response owns a separate
+ElevenLabs generation. When a new response starts or you interrupt, the old
+generation is closed and any delayed audio from it is discarded.
+
+The **Debug events** panel reports time from the end of your turn to the OpenAI
+response, first text, ElevenLabs readiness, and first audio. This makes it clear
+which service is responsible if a particular turn feels slow.
 
 ## Verification
 

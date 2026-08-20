@@ -3,42 +3,75 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>OpenAI Realtime + ElevenLabs Voice</title>
+  <meta name="theme-color" content="#0d1418" />
+  <title>Echo — Personal voice assistant</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='32' fill='%23121c21'/%3E%3Cpath d='M20 36V28M28 42V22M36 38V26M44 34V30' stroke='%2382dfca' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-  <main class="card">
-    <div class="eyebrow">LOCAL VOICE TEST</div>
-    <h1>OpenAI Realtime + ElevenLabs</h1>
-    <p class="sub">
-      OpenAI listens, understands turns, reasons, and handles interruptions.
-      ElevenLabs only speaks the final answer in your cloned voice.
-    </p>
+  <main class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Echo home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>Echo</span>
+      </a>
+      <div class="privacy-note"><span class="privacy-dot" aria-hidden="true"></span>Live session</div>
+    </header>
 
-    <div id="orb" class="orb idle"></div>
-    <div id="status" class="status">Ready</div>
+    <section class="voice-room" aria-labelledby="roomTitle">
+      <div class="room-copy">
+        <p class="eyebrow">Your personal voice</p>
+        <h1 id="roomTitle">Say what’s<br />on your mind.</h1>
+        <p class="intro">A real-time conversation that listens while you speak and answers in your voice. Interrupt naturally whenever you want.</p>
+      </div>
 
-    <div class="buttons">
-      <button id="startBtn">Start conversation</button>
-      <button id="stopBtn" class="secondary" disabled>End</button>
-    </div>
-
-    <section>
-      <h2>You</h2>
-      <div id="userText" class="transcript muted">Your transcript will appear here.</div>
+      <div class="voice-stage">
+        <div id="orb" class="orb idle" aria-hidden="true">
+          <div class="orbit orbit-one"></div>
+          <div class="orbit orbit-two"></div>
+          <div id="avatar" class="avatar" data-viseme="rest">
+            <div class="avatar-images">
+              <img class="avatar-base" src="/assets/avatar/youssef-rest.png" alt="" />
+              <img class="avatar-mouth avatar-mouth-wide" src="/assets/avatar/youssef-wide.png" alt="" />
+              <img class="avatar-mouth avatar-mouth-round" src="/assets/avatar/youssef-round.png" alt="" />
+            </div>
+            <div class="avatar-eyelids"><i></i><i></i></div>
+          </div>
+          <div class="waveform"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        </div>
+        <div class="state-readout">
+          <span class="state-kicker">Conversation status</span>
+          <div id="status" class="status" role="status" aria-live="polite">Ready when you are</div>
+        </div>
+        <div class="buttons" aria-label="Conversation controls">
+          <button id="startBtn" class="primary">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 0 0 3.5-3.5V6a3.5 3.5 0 1 0-7 0v6a3.5 3.5 0 0 0 3.5 3.5Z" /><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M9 21h6" /></svg>
+            Start talking
+          </button>
+          <button id="stopBtn" class="secondary" disabled><span class="stop-icon" aria-hidden="true"></span>End session</button>
+        </div>
+      </div>
     </section>
 
-    <section>
-      <h2>Assistant</h2>
-      <div id="assistantText" class="transcript muted">The assistant response will appear here.</div>
+    <section class="conversation" aria-labelledby="transcriptTitle">
+      <div class="conversation-heading">
+        <div><p class="eyebrow">Live transcript</p><h2 id="transcriptTitle">This conversation</h2></div>
+        <span class="streaming-label"><i aria-hidden="true"></i>Streams as you speak</span>
+      </div>
+      <div class="transcript-grid">
+        <article class="turn user-turn">
+          <div class="speaker"><span class="speaker-avatar">Y</span><div><h3>You</h3><p>Microphone input</p></div></div>
+          <div id="userText" class="transcript muted">Your words will appear here.</div>
+        </article>
+        <article class="turn assistant-turn">
+          <div class="speaker"><span class="speaker-avatar echo-avatar" aria-hidden="true"><i></i><i></i><i></i></span><div><h3>Echo</h3><p>Your cloned voice</p></div></div>
+          <div id="assistantText" class="transcript muted">The answer will appear and speak here.</div>
+        </article>
+      </div>
     </section>
 
-    <details>
-      <summary>Debug events</summary>
-      <pre id="debug"></pre>
-    </details>
+    <details class="diagnostics"><summary>Connection details</summary><pre id="debug"></pre></details>
   </main>
-
   <script type="module" src="/app.js"></script>
 </body>
 </html>

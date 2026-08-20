@@ -36,6 +36,7 @@ export default [
         fetch: "readonly",
         location: "readonly",
         navigator: "readonly",
+        performance: "readonly",
         window: "readonly",
       },
     },

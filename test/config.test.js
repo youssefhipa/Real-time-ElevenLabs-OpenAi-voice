@@ -15,7 +15,7 @@ test("loadConfig applies conversation-friendly defaults", () => {
     elevenLabsVoiceId: "voice-id",
     port: 3000,
     realtimeModel: "gpt-realtime-2.1",
-    vadEagerness: "auto",
+    vadEagerness: "high",
   });
 });
 
