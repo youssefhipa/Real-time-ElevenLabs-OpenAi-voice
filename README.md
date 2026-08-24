@@ -1,7 +1,33 @@
-# Realtime chatbot with your ElevenLabs voice
+# Realtime Voice Agent: OpenAI Realtime + ElevenLabs
 
-This project is a local prototype for a ChatGPT-style voice conversation while
-keeping the assistant's spoken output in your cloned ElevenLabs voice.
+A low-latency, full-duplex voice assistant: OpenAI Realtime handles speech understanding,
+turn-taking, and reasoning over WebRTC, while ElevenLabs' streaming TTS speaks the replies
+in a cloned voice. The interesting engineering problem here isn't "call two APIs" — it's
+keeping two independent streaming services in sync under interruption, so the user can barge
+in mid-sentence and the whole pipeline (browser audio, OpenAI response, ElevenLabs generation)
+tears down and restarts cleanly without stale audio playing.
+
+## Why this is interesting
+
+- **Two-way streaming pipeline, not request/response.** Audio flows browser → OpenAI over
+  WebRTC; text deltas flow server → ElevenLabs over a WebSocket; PCM audio flows back to the
+  browser for scheduled playback — three concurrent streams kept coherent per turn.
+- **Interruption handling as a first-class concern** (`lib/tts-relay.js`): each assistant turn
+  owns a `generation` object with its own socket and response ID. On interrupt, the current
+  generation is marked closed and any in-flight ElevenLabs socket is torn down — buffered
+  events from a superseded generation are checked against `isActive()` and discarded, so audio
+  from a previous turn can never leak into a new one.
+- **Latency shaving via connection pre-warming.** The server opens (and primes) the next
+  ElevenLabs WebSocket as soon as the user stops speaking (`prepareGeneration`), hiding the
+  TTS handshake inside OpenAI's response-generation time instead of paying for it serially.
+- **Sentence-aware chunk flushing.** Text deltas are buffered until a minimum length or a
+  sentence boundary (`endsSentence`), then flushed with ElevenLabs' `try_trigger_generation` /
+  `flush` flags — trading a small amount of buffering for noticeably faster, more natural
+  first-audio latency.
+- **Server-side credential isolation.** Both API keys live only in `.env` on the server;
+  the browser never sees them — the frontend only exchanges SDP/text over `/session` and `/tts`.
+
+## How it works
 
 The realtime path is:
 
@@ -102,3 +128,16 @@ response-ID isolation, stale audio rejection, and interruption cleanup in the TT
 - Keep real credentials only in `.env`; it is ignored by Git.
 - Keep `.env.example` limited to blank placeholders and non-secret defaults.
 - Rotate a key immediately if it is ever committed, shared, or copied into logs.
+
+## Tech stack
+
+Node.js, Express, `ws` (WebSocket), OpenAI Realtime API (WebRTC + semantic VAD), ElevenLabs
+streaming TTS (`eleven_flash_v2_5`, WebSocket streaming), vanilla JS/Web Audio API on the
+frontend. Node's built-in test runner (`node --test`) covers config validation, first-chunk
+buffering, response-ID isolation, and interruption cleanup in the TTS relay.
+
+## What this demonstrates
+
+Designing a real-time, stateful, multi-service streaming system with correct interruption
+semantics — a harder problem than typical single-request LLM integrations, and directly
+relevant to voice agents, live copilots, and any product where a user can talk over the AI.
