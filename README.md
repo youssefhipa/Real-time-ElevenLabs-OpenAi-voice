@@ -40,6 +40,81 @@ The realtime path is:
 
 API keys stay on the server and are never sent in the public frontend files.
 
+## Barge-in sequence
+
+This is the actual event flow implemented across `public/app.js` (browser),
+`server.js` / `lib/tts-relay.js` (relay), OpenAI Realtime (WebRTC data channel),
+and ElevenLabs (WebSocket streaming TTS) when the user talks over the assistant
+mid-reply. Function and event names below match the source directly.
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Browser as Browser (public/app.js)
+    participant OpenAI as OpenAI Realtime (WebRTC)
+    participant Relay as tts-relay.js (/tts WS)
+    participant Eleven as ElevenLabs (stream-input WS)
+
+    Note over Browser,Eleven: Assistant is mid-reply: audio scheduled via queuePcm24k(),<br/>ttsGeneration = N, activeResponseId = R1
+
+    User->>OpenAI: speaks over the mic (WebRTC audio track)
+    OpenAI-->>Browser: dc message: input_audio_buffer.speech_started<br/>(semantic_vad, interrupt_response:true)
+    Browser->>Browser: handleRealtimeEvent() → interruptExternalVoice()
+    activate Browser
+    Browser->>Browser: stopAllPlayback()<br/>ttsGeneration++ (N→N+1), stop() all scheduledSources,<br/>cancel avatar rAF, reset nextAudioTime
+    Browser->>Relay: WS send {type:"interrupt", responseId:R1}
+    Browser->>Browser: activeResponseId = null, activeTtsDone = false
+    deactivate Browser
+
+    Relay->>Relay: closeGeneration(generation for R1)<br/>generation.closed=true, queue=[], socket=null
+    Relay->>Eleven: socket.close() on the R1 generation's WebSocket
+    Relay-->>Browser: WS send {type:"interrupted", responseId:R1}
+
+    Note over OpenAI: OpenAI's own turn-detector cancels its in-flight response<br/>(interrupt_response:true) — server generates a new response for the barge-in
+
+    OpenAI-->>Browser: dc message: response.done {status:"cancelled"}
+    Browser->>Browser: interruptExternalVoice() again (idempotent no-op if already clear)
+
+    OpenAI-->>Browser: dc message: input_audio_buffer.speech_stopped
+    Browser->>Relay: WS send {type:"prepare"}
+    Relay->>Relay: prepareGeneration() → createGeneration(null, prepared:true)
+    Relay->>Eleven: open new stream-input WS (pre-warmed, no responseId yet)
+    Note over Relay,Eleven: TTS handshake overlaps OpenAI's response generation
+
+    OpenAI-->>Browser: dc message: response.created {response.id:R2}
+    Browser->>Browser: activeResponseId = R2, stopAllPlayback() (defensive)
+    Browser->>Relay: WS send {type:"start", responseId:R2}
+    Relay->>Relay: startGeneration(R2) reuses the prepared socket,<br/>generation.responseId=R2, prepared=false
+    Relay-->>Browser: WS send {type:"tts_ready", responseId:R2}
+
+    loop streamed reply
+        OpenAI-->>Browser: dc message: response.output_text.delta
+        Browser->>Relay: WS send {type:"text", responseId:R2, text:delta}
+        Relay->>Relay: buffer until FIRST_CHUNK_MIN_LENGTH or endsSentence(),<br/>then forward with try_trigger_generation / flush
+        Relay->>Eleven: WS send {text, try_trigger_generation, flush?}
+        Eleven-->>Relay: WS message {audio, normalizedAlignment}
+        Relay-->>Browser: WS send {type:"audio", responseId:R2, audio, alignment}
+        Browser->>Browser: queuePcm24k() schedules PCM playback (guarded by ttsGeneration)
+    end
+
+    OpenAI-->>Browser: dc message: response.output_text.done
+    Browser->>Relay: WS send {type:"end", responseId:R2}
+    Relay->>Eleven: WS send {text:""} (documented end-of-sequence packet)
+    Eleven-->>Relay: WS message {isFinal:true}
+    Relay-->>Browser: WS send {type:"tts_done", responseId:R2}
+```
+
+Two guard rails make this safe under rapid, repeated interruption:
+
+- **`isActive(generation)` on every ElevenLabs event** in `tts-relay.js` — a
+  message from a socket that belongs to a superseded generation is dropped
+  instead of being relayed, so audio from response R1 can never reach the
+  browser labeled as R2.
+- **`ttsGeneration` counter on the browser** — `queuePcm24k()` checks the
+  generation the audio chunk arrived under against the current counter before
+  scheduling playback, so even an already-in-flight chunk from before the
+  interrupt is silently discarded rather than played.
+
 ## Requirements
 
 - Node.js 20 or newer
